@@ -28,6 +28,7 @@ This allows you to easily integrate your USB-only UPS into Home Assistant, TrueN
 - **Web UI & Captive Portal**: A modern, responsive web interface protected by a login, with Wi-Fi setup through a captive portal on the ESP32-S3.
 - **Network Page & Hostname**: The state of every link of the board (Wi-Fi or Ethernet), and the hostname the board sends to your router.
 - **Remote Logging & Network Time**: Send the System Log to a syslog server (UDP, RFC 3164 or RFC 5424), with the time from an NTP server and the time zone of your choice.
+- **Power Status Webhook**: Configure a REST API URL in **Board Settings** to receive a JSON POST when mains power fails or returns. Test either transition from the Web UI. See the [setup and payload guide](docs/power-webhook.md).
 - **USB Diagnostics**: One click in the **System Logs** tab exports a file with everything the UPS reports, to attach to a bug or compatibility report.
 - **Over-The-Air (OTA) Updates**: Flash new firmware versions directly from the web browser without touching the board.
 - **Status LED (ESP32-S3)**: Visual feedback for the network and UPS connection, with adjustable brightness.

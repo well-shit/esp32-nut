@@ -24,6 +24,7 @@
 #include "core/log_settings_store.h"
 #include "core/time_settings_store.h"
 #include "network/ntp_clock.h"
+#include "network/power_webhook.h"
 
 class WebConfigServer {
 public:
@@ -51,6 +52,7 @@ public:
     void setRemoteLog(LogSettingsStore* store, SyslogOutput* syslog);
     // Network time of Board Settings (US-117): settings in NVS, applied live to the clock
     void setTime(TimeSettingsStore* store, NtpClock* clock);
+    void setPowerWebhook(WebhookSettingsStore* store, PowerWebhookOutput* output);
 
 private:
     WebServer server;
@@ -85,6 +87,11 @@ private:
     NtpClock* ntp_clock = nullptr;
     void handleGetTime();
     void handleSetTime();
+    WebhookSettingsStore* webhook_store = nullptr;
+    PowerWebhookOutput* power_webhook = nullptr;
+    void handleGetWebhook();
+    void handleSetWebhook();
+    void handleTestWebhook();
 
     void handleConnect();
     void handleLogs();

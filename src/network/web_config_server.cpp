@@ -113,6 +113,9 @@ void WebConfigServer::begin(bool isAPMode) {
     server.on("/api/logging", HTTP_POST, guarded([this]() { handleSetLogging(); }));
     server.on("/api/time", HTTP_GET, guarded([this]() { handleGetTime(); }));
     server.on("/api/time", HTTP_POST, guarded([this]() { handleSetTime(); }));
+    server.on("/api/webhook", HTTP_GET, guarded([this]() { handleGetWebhook(); }));
+    server.on("/api/webhook", HTTP_POST, guarded([this]() { handleSetWebhook(); }));
+    server.on("/api/webhook/test", HTTP_POST, guarded([this]() { handleTestWebhook(); }));
     server.on("/api/logs", HTTP_GET, guarded([this]() { handleLogs(); }));
     server.on("/api/config", HTTP_GET, guarded([this]() { handleGetConfig(); }));
     server.on("/api/ups-vars", HTTP_GET, guarded([this]() { handleUpsVars(); }));
@@ -483,6 +486,80 @@ void WebConfigServer::handleSetTime() {
     String who = webUiUser();
     ntp_clock->configure(next, who.length() > 0 ? who : String("Web UI"));
     server.send(200, "application/json", "{\"success\":true}");
+}
+
+void WebConfigServer::setPowerWebhook(WebhookSettingsStore* store, PowerWebhookOutput* output) {
+    webhook_store = store;
+    power_webhook = output;
+}
+
+void WebConfigServer::handleGetWebhook() {
+    if (!power_webhook) {
+        server.send(503, "application/json", "{\"error\":\"Power notifications unavailable\"}");
+        return;
+    }
+    server.sendHeader("Cache-Control", "no-store");
+    server.send(200, "application/json", power_webhook->statusJson());
+}
+
+void WebConfigServer::handleSetWebhook() {
+    if (!requireJson()) return;
+    if (!webhook_store || !power_webhook) {
+        server.send(503, "application/json", "{\"error\":\"Power notifications unavailable\"}");
+        return;
+    }
+    JsonDocument doc;
+    const String body = server.arg("plain");
+    if (body.length() > 4096) {
+        server.send(413, "application/json", "{\"error\":\"Request too large\"}");
+        return;
+    }
+    if (deserializeJson(doc, body) || !doc.is<JsonObject>() || !doc["enabled"].is<bool>() || !doc["url"].is<String>()) {
+        server.send(400, "application/json", "{\"error\":\"Expected enabled (boolean) and url (string)\"}");
+        return;
+    }
+    WebhookSettings settings;
+    settings.enabled = doc["enabled"].as<bool>();
+    settings.url = doc["url"].as<String>();
+    settings.url.trim();
+    if (!PowerWebhook::validUrl(std::string(settings.url.c_str(), settings.url.length())) ||
+        (settings.enabled && settings.url.isEmpty())) {
+        server.send(400, "application/json", "{\"error\":\"Enter an HTTP or HTTPS URL, up to 512 characters, without credentials or a fragment\"}");
+        return;
+    }
+    if (!webhook_store->save(settings)) {
+        server.send(500, "application/json", "{\"error\":\"Failed to save settings\"}");
+        return;
+    }
+    power_webhook->configure(settings);
+    server.send(200, "application/json", "{\"success\":true}");
+}
+
+void WebConfigServer::handleTestWebhook() {
+    if (!requireJson()) return;
+    if (!power_webhook) {
+        server.send(503, "application/json", "{\"error\":\"Power notifications unavailable\"}");
+        return;
+    }
+    JsonDocument doc;
+    const String body = server.arg("plain");
+    if (body.length() > 128 || deserializeJson(doc, body) || !doc.is<JsonObject>() || !doc["status"].is<String>()) {
+        server.send(400, "application/json", "{\"error\":\"Expected status: online or on_battery\"}");
+        return;
+    }
+    const String status = doc["status"].as<String>();
+    if (status != "online" && status != "on_battery") {
+        server.send(400, "application/json", "{\"error\":\"Expected status: online or on_battery\"}");
+        return;
+    }
+    String error;
+    const uint32_t id = power_webhook->test(status == "online" ? PowerWebhook::State::ONLINE : PowerWebhook::State::ON_BATTERY, error);
+    JsonDocument response;
+    if (!id) response["error"] = error;
+    else { response["queued"] = true; response["event_id"] = id; }
+    String json;
+    serializeJson(response, json);
+    server.send(id ? 202 : 503, "application/json", json);
 }
 
 void WebConfigServer::openRecoveryWindow(uint32_t now) {
