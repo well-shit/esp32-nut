@@ -20,6 +20,7 @@
 #include "network/syslog_output.h"
 #include "network/ntp_clock.h"
 #include "core/time_settings_store.h"
+#include "network/power_webhook.h"
 
 USBHostUPS usb_ups;
 ConfigManager config_mgr;
@@ -49,6 +50,8 @@ static LogSettingsStore log_settings_store;
 // Network time and time zone of Board Settings (US-117, ADR 0009), NVS "time"
 static TimeSettingsStore time_settings_store;
 static NtpClock ntp_clock;
+static WebhookSettingsStore webhook_settings_store;
+static PowerWebhookOutput power_webhook;
 
 // shutdown.default once per OB+LB event, option of the Board page (US-114)
 static AutoShutdown auto_shutdown;
@@ -238,6 +241,8 @@ void setup() {
     log_dispatcher.start();
     web_server.setRemoteLog(&log_settings_store, &syslog_output);
     web_server.setTime(&time_settings_store, &ntp_clock);
+    power_webhook.begin(&network_mgr, &usb_ups, config_mgr.getNutConfig().ups_name, webhook_settings_store.load());
+    web_server.setPowerWebhook(&webhook_settings_store, &power_webhook);
 
     // Inizializzazione della libreria USBHostUPS (sempre attiva)
     // "%s": messages can carry values sent by NUT clients (SET VAR, US-067)
@@ -298,6 +303,7 @@ void loop() {
     web_server.loop();
     network_mgr.loop();
     ntp_clock.poll(now);
+    power_webhook.poll(now);
 
     // Before the early return for an invalid config (the timer is disabled there anyway)
     if (ap_timeout.isEnabled()) {

@@ -3593,6 +3593,155 @@ document.addEventListener('DOMContentLoaded', () => {
         }, TIME_POLL_MS);
     }
 
+    const webhookForm = document.getElementById('webhook-form');
+    if (webhookForm) {
+        const W = id => document.getElementById(`webhook-${id}`);
+        let saved = null, dirty = false, busy = false, loading = false, testing = false;
+        let editVersion = 0;
+        const error = message => {
+            W('error').textContent = message || '';
+            W('error').hidden = !message;
+        };
+        function controls() {
+            W('fields').disabled = !saved || busy || loading;
+            W('save').disabled = busy || testing || loading;
+            const testDisabled = busy || testing || loading || dirty || !saved || !saved.url || !saved.available;
+            W('test-lost').disabled = testDisabled;
+            W('test-restored').disabled = testDisabled;
+        }
+        function showStatus(data) {
+            const last = data.last_result;
+            const outcome = last && (last.id || last.error)
+                ? (last.success ? ` Last delivery: HTTP ${last.http_code}.` : ` Last failure: ${last.error}.`) : '';
+            W('delivery').textContent = `${data.sent || 0} delivered, ${data.failed || 0} failed, ${data.pending || 0} pending.${outcome}`;
+        }
+        async function readStatus() {
+            const response = await apiFetch('/api/webhook', { cache: 'no-store' });
+            if (response.status === 401) return null;
+            const data = await response.json();
+            if (!response.ok || typeof data.enabled !== 'boolean' || typeof data.url !== 'string') {
+                throw new Error(data.error || 'Could not read power notification settings. Press Refresh to retry.');
+            }
+            return data;
+        }
+        async function loadWebhook() {
+            if (loading || busy || sessionExpired) return;
+            loading = true;
+            controls();
+            const version = editVersion;
+            try {
+                const data = await readStatus();
+                if (!data) return;
+                saved = data;
+                if (!dirty && editVersion === version) {
+                    W('enabled').checked = data.enabled;
+                    W('url').value = data.url;
+                }
+                showStatus(data);
+                if (!testing) error('');
+            } catch (e) {
+                error(e.message || 'Could not read power notification settings.');
+            } finally {
+                loading = false;
+                controls();
+            }
+        }
+        function edited() {
+            ++editVersion;
+            dirty = true;
+            W('result').textContent = 'Save your changes before testing.';
+            error('');
+            controls();
+        }
+        W('enabled').addEventListener('change', edited);
+        W('url').addEventListener('input', edited);
+        webhookForm.addEventListener('submit', async e => {
+            e.preventDefault();
+            if (busy || testing || loading || !saved) return;
+            error('');
+            const url = W('url').value.trim();
+            const enabled = W('enabled').checked;
+            try {
+                if (url) {
+                    const parsed = new URL(url);
+                    if (!/^https?:\/\//.test(url) || !['http:', 'https:'].includes(parsed.protocol) ||
+                        !parsed.hostname || parsed.username || parsed.password || url.includes('#') ||
+                        /[\s\\\u0000-\u001f\u007f-\uffff]/.test(url) || url.length > 512) throw new Error();
+                } else if (enabled) throw new Error();
+            } catch (_) {
+                error('Enter an HTTP or HTTPS URL, up to 512 characters, without credentials or a fragment.');
+                W('url').focus();
+                return;
+            }
+            busy = true;
+            controls();
+            W('result').textContent = 'Saving…';
+            try {
+                const response = await apiFetch('/api/webhook', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ enabled, url })
+                });
+                if (response.status === 401) return;
+                const data = await response.json();
+                if (!response.ok || data.success !== true) throw new Error(data.error || 'Failed to save settings.');
+                saved = { ...saved, enabled, url };
+                W('url').value = url;
+                dirty = false;
+                W('result').textContent = 'Saved. You can now test the API notification.';
+            } catch (e) {
+                W('result').textContent = '';
+                error(e.message || 'Failed to save settings.');
+            } finally {
+                busy = false;
+                controls();
+            }
+        });
+        async function testWebhook(status) {
+            if (busy || testing || dirty || !saved || !saved.url) return;
+            testing = true;
+            // Freeze inputs for the test so its outcome always describes the displayed URL.
+            busy = true;
+            controls();
+            error('');
+            W('result').textContent = 'Sending test notification…';
+            try {
+                const response = await apiFetch('/api/webhook/test', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status })
+                });
+                if (response.status === 401) return;
+                const data = await response.json();
+                if (!response.ok || data.queued !== true || !Number.isInteger(data.event_id)) {
+                    throw new Error(data.error || 'Could not queue test notification.');
+                }
+                for (let i = 0; i < 60 && !sessionExpired; ++i) {
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    const result = await readStatus();
+                    if (!result) return;
+                    showStatus(result);
+                    if (result.last_test && result.last_test.id === data.event_id) {
+                        if (!result.last_test.success) throw new Error(result.last_test.error || 'Test delivery failed.');
+                        W('result').textContent = `Test ${status === 'online' ? 'power restored' : 'power lost'} delivered (HTTP ${result.last_test.http_code}).`;
+                        return;
+                    }
+                }
+                W('result').textContent = 'Test is still pending. Refresh notification status to check delivery.';
+            } catch (e) {
+                W('result').textContent = '';
+                error(e.message || 'Test delivery failed.');
+            } finally {
+                testing = busy = false;
+                controls();
+            }
+        }
+        W('test-lost').addEventListener('click', () => testWebhook('on_battery'));
+        W('test-restored').addEventListener('click', () => testWebhook('online'));
+        W('refresh').addEventListener('click', loadWebhook);
+        tabs.forEach(tab => tab.addEventListener('click', () => {
+            if (tab.getAttribute('data-target') === 'board') loadWebhook();
+        }));
+        if (activeTab && activeTab.getAttribute('data-target') === 'board') loadWebhook();
+    }
+
     // US-061 Log out (this session) and US-062 Log out of all devices: same
     // flow, different endpoint. Both buttons live in the session row, so they
     // share its visibility (hidden in AP mode and without a session).

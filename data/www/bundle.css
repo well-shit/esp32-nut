@@ -2302,6 +2302,12 @@ body.auth-page {
 }
 .board-section[hidden] { display: none; }
 
+#webhook-fields { border: 0; padding: 0; margin: 0; min-width: 0; }
+#webhook-section .form-actions { display: flex; flex-wrap: wrap; gap: 0.75rem; }
+#webhook-section .auth-form { max-width: none; }
+#webhook-url { width: 100%; box-sizing: border-box; }
+#webhook-error { overflow-wrap: anywhere; }
+
 /* --- Setting row: label + hint on the left, control on the right --- */
 .board-row {
     display: grid;
